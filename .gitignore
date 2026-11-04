@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.mp3
+*.mp4
+*.webm
+*.m4a
+downloads/
+build/
+dist/
+*.spec
+.DS_Store
+.vscode/
+.idea/

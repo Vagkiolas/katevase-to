@@ -1,0 +1,2 @@
+yt-dlp
+imageio-ffmpeg  # optional: ffmpeg for MP3 / 1080p+ (the app can install it with one click)
