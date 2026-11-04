@@ -1,13 +1,15 @@
 """
-Katevase To v1.2
+Katevase To v1.3
 Απλός YouTube downloader (βίντεο MP4 / ήχος MP3)
 
-ΕΓΚΑΤΑΣΤΑΣΗ:
-    Δεν χρειάζεται τίποτα χειροκίνητα — το πρόγραμμα εγκαθιστά
-    μόνο του ό,τι του λείπει, στη σωστή Python.
-
 ΤΡΕΞΙΜΟ:
-    python katevase_to_1.2.py
+    Διπλό κλικ στο "Katevase To.bat"
+    (ή: py -3.14 katevase_to_1.3.py)
+
+Τι χρειάζεται — τα βλέπεις και μέσα στο πρόγραμμα:
+    yt-dlp    → το βάζει μόνο του
+    ffmpeg    → το βάζει μόνο του με κουμπί
+    Node.js   → χρειάζεται για αναλύσεις πάνω από 720p
 """
 
 import os
@@ -16,6 +18,7 @@ import queue
 import shutil
 import threading
 import subprocess
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog
 import tkinter.messagebox as mb
@@ -37,12 +40,11 @@ def _pip_install(*packages):
 def _ensure_ytdlp():
     try:
         import yt_dlp  # noqa: F401
-        return True
+        return
     except ImportError:
         pass
 
-    root = tk.Tk()
-    root.withdraw()
+    root = tk.Tk(); root.withdraw()
     ok = mb.askyesno(
         "Λείπει το yt-dlp",
         "Το yt-dlp δεν βρέθηκε σ' αυτή την Python:\n\n"
@@ -50,7 +52,6 @@ def _ensure_ytdlp():
         "(Αν το είχες εγκαταστήσει, μπήκε σε άλλη Python του PC.)\n\n"
         "Να το εγκαταστήσω τώρα εδώ;")
     if not ok:
-        root.destroy()
         sys.exit(1)
 
     r = _pip_install("yt-dlp")
@@ -65,9 +66,8 @@ def _ensure_ytdlp():
         sys.exit(1)
 
     root3 = tk.Tk(); root3.withdraw()
-    mb.showinfo("Έτοιμο",
-                "Το yt-dlp εγκαταστάθηκε!\n\n"
-                "Κλείσε αυτό το μήνυμα και ξανάνοιξε το πρόγραμμα.")
+    mb.showinfo("Έτοιμο", "Το yt-dlp εγκαταστάθηκε!\n\n"
+                          "Κλείσε αυτό και ξανάνοιξε το πρόγραμμα.")
     sys.exit(0)
 
 
@@ -80,17 +80,10 @@ import yt_dlp
 # ══════════════════════════════════════════════════════════════════════
 
 C = {
-    'bg':      '#12121a',
-    'panel':   '#1c1c28',
-    'field':   '#262636',
-    'line':    '#33334a',
-    'accent':  '#ff2d55',
-    'hover':   '#ff5c7a',
-    'ok':      '#2ee6a8',
-    'warn':    '#ffb627',
-    'err':     '#ff4d5e',
-    'txt':     '#ecebf5',
-    'dim':     '#8b8ba7',
+    'bg':     '#12121a', 'panel':  '#1c1c28', 'field': '#262636',
+    'line':   '#33334a', 'accent': '#ff2d55', 'hover': '#ff5c7a',
+    'ok':     '#2ee6a8', 'warn':   '#ffb627', 'err':   '#ff4d5e',
+    'txt':    '#ecebf5', 'dim':    '#8b8ba7',
 }
 
 F_TITLE = ("Segoe UI Semibold", 16)
@@ -101,30 +94,22 @@ F_BTN   = ("Segoe UI Semibold", 11)
 F_ST    = ("Segoe UI", 9)
 
 HERE = os.path.dirname(os.path.abspath(sys.argv[0]))
-
-# Ουρά μηνυμάτων: το thread του κατεβάσματος ΔΕΝ αγγίζει ποτέ το GUI,
-# στέλνει μόνο μηνύματα εδώ και το GUI τα διαβάζει με το window.after().
-Q = queue.Queue()
+Q = queue.Queue()      # το thread μιλάει στο GUI ΜΟΝΟ μέσω αυτής
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  ΕΥΡΕΣΗ FFMPEG
+#  ΑΝΙΧΝΕΥΣΗ ΕΡΓΑΛΕΙΩΝ
 # ══════════════════════════════════════════════════════════════════════
 
 def find_ffmpeg():
-    """Επιστρέφει το path του ffmpeg, ή None. Ψάχνει με τη σειρά:
-       1) στο PATH των Windows
-       2) σε φάκελο 'ffmpeg' δίπλα στο script
-       3) στο πακέτο imageio-ffmpeg (αυτό που βάζει το κουμπί)"""
+    """ffmpeg: PATH → φάκελος δίπλα στο script → πακέτο imageio-ffmpeg."""
     p = shutil.which("ffmpeg")
     if p:
         return p
-
     for sub in ("ffmpeg.exe", os.path.join("bin", "ffmpeg.exe"), "ffmpeg"):
         cand = os.path.join(HERE, "ffmpeg", sub)
         if os.path.isfile(cand):
             return cand
-
     try:
         import imageio_ffmpeg
         exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -132,15 +117,21 @@ def find_ffmpeg():
             return exe
     except Exception:
         pass
-
     return None
 
 
+def find_js():
+    """Το yt-dlp χρειάζεται JavaScript runtime για να ξεκλειδώσει τις
+       μεγάλες αναλύσεις. Node.js ή Deno — ό,τι βρεθεί."""
+    return shutil.which("node") or shutil.which("deno")
+
+
 FFMPEG = find_ffmpeg()
+JSRT = find_js()
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  ΛΟΓΙΚΗ ΚΑΤΕΒΑΣΜΑΤΟΣ  (τρέχει σε ξεχωριστό thread)
+#  ΛΟΓΙΚΗ ΚΑΤΕΒΑΣΜΑΤΟΣ  (ξεχωριστό thread)
 # ══════════════════════════════════════════════════════════════════════
 
 def hook(d):
@@ -148,13 +139,12 @@ def hook(d):
         total = d.get('total_bytes') or d.get('total_bytes_estimate')
         done = d.get('downloaded_bytes', 0)
         pct = (done / total * 100) if total else 0
-        mb_done = done / 1048576
-        mb_tot = (total / 1048576) if total else 0
         spd = d.get('speed')
         spd_s = f"{spd/1048576:.1f} MB/s" if spd else "..."
         Q.put(('progress', pct))
-        Q.put(('status', (f"Κατεβαίνει  {pct:.0f}%   "
-                          f"({mb_done:.1f}/{mb_tot:.1f} MB)   {spd_s}"), 'dim'))
+        Q.put(('status', f"Κατεβαίνει  {pct:.0f}%   "
+                         f"({done/1048576:.1f}/{(total or 0)/1048576:.1f} MB)   "
+                         f"{spd_s}", 'dim'))
     elif d['status'] == 'finished':
         Q.put(('progress', 99))
         Q.put(('status', "Ένωση βίντεο + ήχου... (λίγη υπομονή)", 'dim'))
@@ -171,34 +161,26 @@ def build_opts(save_path, mode, quality, browser):
         'retries': 10,
         'fragment_retries': 10,
         'windowsfilenames': True,
-        'ignoreerrors': False,
     }
 
-    # Λέμε ρητά στο yt-dlp πού είναι το ffmpeg, ώστε να δουλεύει
-    # ακόμα κι αν δεν είναι στο PATH των Windows.
     if FFMPEG:
         opts['ffmpeg_location'] = FFMPEG
 
-    # ΤΟ ΚΛΕΙΔΙ ΓΙΑ ΤΟ "ΔΕΝ ΚΑΤΕΒΑΖΕΙ ΤΙΠΟΤΑ":
-    # το YouTube ζητάει πλέον απόδειξη ότι δεν είσαι bot.
-    # Δανειζόμαστε τα cookies από browser που είναι ήδη συνδεδεμένος.
-    if browser and browser != "— κανένας —":
-        opts['cookiesfrombrowser'] = (browser.lower(),)
+    if browser and browser.startswith("Firefox"):
+        opts['cookiesfrombrowser'] = ('firefox',)
+    elif browser and browser != "— κανένας —":
+        opts['cookiesfrombrowser'] = (browser.split()[0].lower(),)
 
     if mode == 'audio':
         if FFMPEG:
             opts['format'] = 'bestaudio/best'
-            opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
+            opts['postprocessors'] = [{'key': 'FFmpegExtractAudio',
+                                       'preferredcodec': 'mp3',
+                                       'preferredquality': '192'}]
         else:
-            # Χωρίς ffmpeg δεν γίνεται MP3 — κατεβάζουμε m4a αυτούσιο.
             opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
     else:
         if not FFMPEG:
-            # Χωρίς ffmpeg μόνο "progressive" αρχεία → μέχρι 720p.
             opts['format'] = 'best[ext=mp4]/best'
         elif quality == 'Μέγιστη':
             opts['format'] = 'bestvideo+bestaudio/best'
@@ -214,13 +196,15 @@ def build_opts(save_path, mode, quality, browser):
 
 def friendly_error(msg):
     m = msg.lower()
-    if 'sign in to confirm' in m or 'not a bot' in m:
-        return ("Το YouTube μπλόκαρε το αίτημα. Διάλεξε τον browser σου "
-                "στο πεδίο «Cookies» (πρέπει να είσαι συνδεδεμένος στο "
-                "YouTube σ' αυτόν) και ξαναδοκίμασε.")
     if 'could not copy' in m and 'cookie' in m:
-        return ("Δεν μπόρεσα να διαβάσω τα cookies — κλείσε τελείως τον "
-                "browser (και από τη γραμμή εργασιών) και ξαναδοκίμασε.")
+        return ("Το Chrome κλειδώνει τα cookies του και δεν μπορώ να τα "
+                "διαβάσω. Διάλεξε Firefox, ή άσε «κανένας».")
+    if 'dpapi' in m or 'failed to decrypt' in m:
+        return ("Το Chrome κρυπτογραφεί πλέον τα cookies του και κανένα "
+                "εξωτερικό πρόγραμμα δεν τα διαβάζει. Χρησιμοποίησε Firefox.")
+    if 'sign in to confirm' in m or 'not a bot' in m:
+        return ("Το YouTube μπλόκαρε το αίτημα. Διάλεξε Firefox στο πεδίο "
+                "«Cookies» (συνδεδεμένος στο YouTube) και ξαναδοκίμασε.")
     if 'unable to extract' in m or 'player response' in m:
         return ("Το yt-dlp είναι παλιό για τις τωρινές αλλαγές του YouTube. "
                 "Πάτα «Ενημέρωση» πάνω δεξιά.")
@@ -244,8 +228,7 @@ def worker(url, save_path, mode, quality, browser):
         with yt_dlp.YoutubeDL(build_opts(save_path, mode, quality, browser)) as ydl:
             ydl.download([url])
         Q.put(('progress', 100))
-        kind = "MP3" if (mode == 'audio' and FFMPEG) else \
-               "αρχείο ήχου" if mode == 'audio' else "βίντεο"
+        kind = ("MP3" if FFMPEG else "αρχείο ήχου") if mode == 'audio' else "βίντεο"
         Q.put(('status', f"Έτοιμο! Το {kind} αποθηκεύτηκε. ✅", 'ok'))
     except Exception as e:
         Q.put(('status', friendly_error(str(e)), 'err'))
@@ -257,10 +240,10 @@ def updater():
     try:
         Q.put(('status', "Ενημέρωση yt-dlp...", 'dim'))
         r = _pip_install("yt-dlp")
-        if r.returncode == 0:
-            Q.put(('status', "Ενημερώθηκε! Κλείσε και ξανάνοιξε το πρόγραμμα.", 'ok'))
-        else:
-            Q.put(('status', "Η ενημέρωση απέτυχε — έλεγξε τη σύνδεσή σου.", 'err'))
+        Q.put(('status',
+               "Ενημερώθηκε! Κλείσε και ξανάνοιξε το πρόγραμμα." if r.returncode == 0
+               else "Η ενημέρωση απέτυχε — έλεγξε τη σύνδεσή σου.",
+               'ok' if r.returncode == 0 else 'err'))
     except Exception as e:
         Q.put(('status', f"Η ενημέρωση απέτυχε: {e}", 'err'))
     finally:
@@ -268,8 +251,6 @@ def updater():
 
 
 def ffmpeg_installer():
-    """Κατεβάζει το ffmpeg μέσω pip (imageio-ffmpeg) — δεν χρειάζεται
-       winget, ούτε χειροκίνητο PATH."""
     global FFMPEG
     try:
         Q.put(('status', "Κατέβασμα ffmpeg... (~30 MB, μια φορά μόνο)", 'dim'))
@@ -277,16 +258,14 @@ def ffmpeg_installer():
         if r.returncode != 0:
             Q.put(('status', "Η εγκατάσταση απέτυχε — έλεγξε τη σύνδεσή σου.", 'err'))
             return
-
         found = find_ffmpeg()
         if found:
             FFMPEG = found
-            Q.put(('ffmpeg_ok', None))
-            Q.put(('status', "Το ffmpeg εγκαταστάθηκε! Τώρα δουλεύει 1080p+ "
-                             "και MP3. ✅", 'ok'))
+            Q.put(('refresh', None))
+            Q.put(('status', "Το ffmpeg εγκαταστάθηκε! ✅", 'ok'))
         else:
-            Q.put(('status', "Εγκαταστάθηκε αλλά δεν το βρίσκω. Κλείσε και "
-                             "ξανάνοιξε το πρόγραμμα.", 'warn'))
+            Q.put(('status', "Εγκαταστάθηκε αλλά δεν το βρίσκω. "
+                             "Ξανάνοιξε το πρόγραμμα.", 'warn'))
     except Exception as e:
         Q.put(('status', f"Σφάλμα: {e}", 'err'))
     finally:
@@ -300,15 +279,14 @@ def ffmpeg_installer():
 win = tk.Tk()
 win.title("Katevase To")
 win.configure(bg=C['bg'])
-win.geometry("600x430")
+win.geometry("620x500")
 win.resizable(False, False)
 
 st = ttk.Style()
 st.theme_use('clam')
 st.configure("TEntry", fieldbackground=C['field'], foreground=C['txt'],
              insertcolor=C['accent'], bordercolor=C['line'],
-             lightcolor=C['line'], darkcolor=C['line'],
-             borderwidth=1, padding=8)
+             lightcolor=C['line'], darkcolor=C['line'], borderwidth=1, padding=8)
 st.configure("TCombobox", fieldbackground=C['field'], background=C['field'],
              foreground=C['txt'], arrowcolor=C['dim'], bordercolor=C['line'],
              lightcolor=C['line'], darkcolor=C['line'], borderwidth=1, padding=6)
@@ -320,7 +298,7 @@ win.option_add('*TCombobox*Listbox.foreground', C['txt'])
 win.option_add('*TCombobox*Listbox.selectBackground', C['accent'])
 st.configure("P.Horizontal.TProgressbar", troughcolor=C['field'],
              background=C['accent'], bordercolor=C['bg'],
-             lightcolor=C['accent'], darkcolor=C['accent'], thickness=5)
+             lightcolor=C['accent'], darkcolor=C['accent'], thickness=6)
 
 
 def flat_btn(parent, text, cmd, bg, fg, font=F_LBL, padx=14, pady=7):
@@ -340,27 +318,37 @@ def lbl(parent, text, fg=C['dim'], font=F_LBL):
 # ── Header ────────────────────────────────────────────────────────────
 head = tk.Frame(win, bg=C['bg'])
 head.pack(fill='x', padx=26, pady=(20, 0))
-
-tk.Label(head, text="Katevase To", bg=C['bg'], fg=C['txt'],
-         font=F_TITLE).pack(side='left')
-tk.Label(head, text=" v1.2", bg=C['bg'], fg=C['accent'],
-         font=F_SUB).pack(side='left', pady=(7, 0))
-
+tk.Label(head, text="Katevase To", bg=C['bg'], fg=C['txt'], font=F_TITLE).pack(side='left')
+tk.Label(head, text=" v1.3", bg=C['bg'], fg=C['accent'], font=F_SUB).pack(side='left', pady=(7, 0))
 flat_btn(head, "⟳ Ενημέρωση", lambda: start(updater),
          C['panel'], C['dim'], padx=10, pady=4).pack(side='right')
 
-tk.Frame(win, bg=C['line'], height=1).pack(fill='x', padx=26, pady=(12, 14))
+tk.Frame(win, bg=C['line'], height=1).pack(fill='x', padx=26, pady=(12, 0))
 
-# ── Μπάρα ffmpeg (φαίνεται μόνο αν λείπει) ───────────────────────────
-ff_bar = tk.Frame(win, bg=C['panel'])
-ff_inner = tk.Frame(ff_bar, bg=C['panel'])
-ff_inner.pack(fill='x', padx=12, pady=9)
-tk.Label(ff_inner, text="⚠  Λείπει το ffmpeg → μόνο 720p, χωρίς MP3",
-         bg=C['panel'], fg=C['warn'], font=F_LBL).pack(side='left')
-ff_btn = flat_btn(ff_inner, "Εγκατάσταση ffmpeg",
-                  lambda: start(ffmpeg_installer),
-                  C['accent'], 'white', padx=12, pady=5)
-ff_btn.pack(side='right')
+# ── Περιοχή προειδοποιήσεων ──────────────────────────────────────────
+notices = tk.Frame(win, bg=C['bg'])
+notices.pack(fill='x', padx=26, pady=(12, 0))
+
+
+def make_notice(text, btn_text, cmd, color):
+    bar = tk.Frame(notices, bg=C['panel'])
+    inner = tk.Frame(bar, bg=C['panel'])
+    inner.pack(fill='x', padx=12, pady=9)
+    tk.Label(inner, text=text, bg=C['panel'], fg=color,
+             font=F_LBL, justify='left').pack(side='left')
+    b = flat_btn(inner, btn_text, cmd, C['accent'], 'white', padx=12, pady=5)
+    b.pack(side='right')
+    return bar, b
+
+
+ff_bar, ff_btn = make_notice("⚠  Λείπει το ffmpeg → μόνο 720p, χωρίς MP3",
+                             "Εγκατάσταση", lambda: start(ffmpeg_installer),
+                             C['warn'])
+
+js_bar, js_btn = make_notice("⚠  Λείπει το Node.js → το YouTube κρύβει τα 1080p+",
+                             "Κατέβασέ το",
+                             lambda: webbrowser.open("https://nodejs.org/en/download"),
+                             C['warn'])
 
 # ── Body ──────────────────────────────────────────────────────────────
 body = tk.Frame(win, bg=C['bg'])
@@ -385,21 +373,22 @@ opts.grid(row=4, column=0, columnspan=3, sticky='ew', pady=(16, 0))
 
 mode_var = tk.StringVar(value='video')
 
+
 def mk_toggle(parent, text, value):
     return tk.Radiobutton(parent, text=text, value=value, variable=mode_var,
-                          command=lambda: refresh_mode(),
-                          indicatoron=False, font=F_LBL, width=11,
-                          bg=C['panel'], fg=C['dim'],
+                          command=lambda: refresh_mode(), indicatoron=False,
+                          font=F_LBL, width=11, bg=C['panel'], fg=C['dim'],
                           selectcolor=C['accent'], activebackground=C['field'],
                           activeforeground=C['txt'], relief='flat', bd=0,
                           padx=8, pady=7, cursor='hand2', highlightthickness=0)
+
 
 mk_toggle(opts, "Βίντεο  MP4", 'video').pack(side='left')
 mk_toggle(opts, "Ήχος  MP3", 'audio').pack(side='left', padx=(6, 20))
 
 qual_lbl = lbl(opts, "Ποιότητα")
 qual_lbl.pack(side='left', padx=(0, 6))
-qual_var = tk.StringVar(value="1080p")
+qual_var = tk.StringVar(value="Μέγιστη")
 ALL_Q = ["Μέγιστη", "2160p", "1440p", "1080p", "720p", "480p"]
 qual_box = ttk.Combobox(opts, textvariable=qual_var, state='readonly',
                         width=10, values=ALL_Q)
@@ -407,41 +396,50 @@ qual_box.pack(side='left')
 
 ck = tk.Frame(body, bg=C['bg'])
 ck.grid(row=5, column=0, columnspan=3, sticky='ew', pady=(12, 0))
-lbl(ck, "Cookies από browser").pack(side='left', padx=(0, 8))
+lbl(ck, "Cookies από").pack(side='left', padx=(0, 8))
 ck_var = tk.StringVar(value="— κανένας —")
-ttk.Combobox(ck, textvariable=ck_var, state='readonly', width=14,
-             values=["— κανένας —", "Chrome", "Firefox", "Edge", "Brave", "Opera"]
-             ).pack(side='left')
-lbl(ck, "← βάλ' το αν σου βγάζει μπλόκο", fg=C['line'],
+ttk.Combobox(ck, textvariable=ck_var, state='readonly', width=22,
+             values=["— κανένας —", "Firefox  (δουλεύει)",
+                     "Chrome  (δεν δουλεύει πια)",
+                     "Edge  (δεν δουλεύει πια)",
+                     "Brave  (δεν δουλεύει πια)"]).pack(side='left')
+lbl(ck, "← μόνο αν σου βγάζει μπλόκο", fg=C['line'],
     font=F_SUB).pack(side='left', padx=(8, 0))
 
 # ── Footer ────────────────────────────────────────────────────────────
 foot = tk.Frame(win, bg=C['bg'])
 foot.pack(fill='x', side='bottom', padx=26, pady=(0, 18))
 
-go_btn = tk.Button(foot, text="ΚΑΤΕΒΑΣΜΑ", command=lambda: go(),
-                   font=F_BTN, bg=C['accent'], fg='white',
-                   activebackground=C['hover'], activeforeground='white',
-                   relief='flat', bd=0, pady=11, cursor='hand2',
-                   highlightthickness=0)
+go_btn = tk.Button(foot, text="ΚΑΤΕΒΑΣΜΑ", command=lambda: go(), font=F_BTN,
+                   bg=C['accent'], fg='white', activebackground=C['hover'],
+                   activeforeground='white', relief='flat', bd=0, pady=11,
+                   cursor='hand2', highlightthickness=0)
 go_btn.pack(fill='x')
 go_btn.bind('<Enter>', lambda e: go_btn.config(bg=C['hover']) if str(go_btn['state']) == 'normal' else None)
 go_btn.bind('<Leave>', lambda e: go_btn.config(bg=C['accent']) if str(go_btn['state']) == 'normal' else None)
 
+status = tk.Label(foot, text="", bg=C['bg'], fg=C['dim'], font=F_ST,
+                  wraplength=560, justify='center')
+status.pack(fill='x', side='bottom', pady=(9, 0))
+
 prog_var = tk.DoubleVar(value=0)
 prog = ttk.Progressbar(foot, variable=prog_var, maximum=100,
                        style="P.Horizontal.TProgressbar")
-prog.pack(fill='x', pady=(10, 0))
-prog.pack_forget()
-
-status = tk.Label(foot, text="", bg=C['bg'], fg=C['dim'], font=F_ST,
-                  wraplength=548, justify='center')
-status.pack(fill='x', pady=(9, 0))
+# ΔΙΟΡΘΩΣΗ: παλιά έκανα pack_forget() και μετά pack() σκέτο — το Tk το
+# ξανάβαζε στο ΤΕΛΟΣ του frame, κάτω από το status, εκτός παραθύρου.
+# Τώρα μπαίνει πάντα ρητά πριν το status.
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  ΕΝΕΡΓΕΙΕΣ
 # ══════════════════════════════════════════════════════════════════════
+
+def show_prog(on):
+    if on:
+        prog.pack(fill='x', pady=(10, 0), before=status)
+    else:
+        prog.pack_forget()
+
 
 def refresh_mode():
     if mode_var.get() == 'video':
@@ -452,12 +450,14 @@ def refresh_mode():
         qual_box.pack_forget()
 
 
-def apply_ffmpeg_state():
+def refresh_notices():
+    for bar, missing in ((ff_bar, not FFMPEG), (js_bar, not JSRT)):
+        bar.pack_forget()
+        if missing:
+            bar.pack(fill='x', pady=(0, 6))
     if FFMPEG:
-        ff_bar.pack_forget()
         qual_box.config(values=ALL_Q, state='readonly')
     else:
-        ff_bar.pack(fill='x', padx=26, after=head)
         qual_box.config(values=["720p"], state='disabled')
         qual_var.set("720p")
 
@@ -481,7 +481,7 @@ def start(target, *args):
     go_btn.config(state='disabled', bg=C['line'], text="ΠΕΡΙΜΕΝΕ...")
     ff_btn.config(state='disabled', bg=C['line'])
     prog_var.set(0)
-    prog.pack(fill='x', pady=(10, 0))
+    show_prog(True)
     threading.Thread(target=target, args=args, daemon=True).start()
 
 
@@ -495,7 +495,7 @@ def go():
 
 
 def pump():
-    """Μόνο αυτή η συνάρτηση αγγίζει το GUI — τρέχει στο main thread."""
+    """Μόνο αυτή αγγίζει το GUI — τρέχει στο main thread."""
     try:
         while True:
             kind, *rest = Q.get_nowait()
@@ -503,12 +503,12 @@ def pump():
                 status.config(text=rest[0], fg=C[rest[1]])
             elif kind == 'progress':
                 prog_var.set(rest[0])
-            elif kind == 'ffmpeg_ok':
-                apply_ffmpeg_state()
+            elif kind == 'refresh':
+                refresh_notices()
             elif kind == 'done':
                 go_btn.config(state='normal', bg=C['accent'], text="ΚΑΤΕΒΑΣΜΑ")
                 ff_btn.config(state='normal', bg=C['accent'])
-                prog.pack_forget()
+                show_prog(False)
     except queue.Empty:
         pass
     win.after(120, pump)
@@ -516,9 +516,8 @@ def pump():
 
 # ── Εκκίνηση ──────────────────────────────────────────────────────────
 refresh_mode()
-apply_ffmpeg_state()
+refresh_notices()
 url_entry.focus()
 win.bind('<Return>', lambda e: go() if str(go_btn['state']) == 'normal' else None)
-
 win.after(120, pump)
 win.mainloop()
