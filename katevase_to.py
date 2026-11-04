@@ -1,10 +1,9 @@
 """
-Katevase To v1.3
+Katevase To v1.4
 Απλός YouTube downloader (βίντεο MP4 / ήχος MP3)
 
 ΤΡΕΞΙΜΟ:
     Διπλό κλικ στο "Katevase To.bat"
-    (ή: py -3.14 katevase_to_1.3.py)
 
 Τι χρειάζεται — τα βλέπεις και μέσα στο πρόγραμμα:
     yt-dlp    → το βάζει μόνο του
@@ -126,8 +125,28 @@ def find_js():
     return shutil.which("node") or shutil.which("deno")
 
 
+def has_firefox():
+    """Υπάρχει προφίλ Firefox μ' αποθηκευμένα cookies;
+       Μόνο ο Firefox δουλεύει: τα Chromium (Chrome/Edge/Brave/Opera)
+       κλειδώνουν πλέον τα cookies τους με App-Bound Encryption."""
+    roots = [os.path.join(os.environ.get('APPDATA', ''), 'Mozilla', 'Firefox', 'Profiles'),
+             os.path.expanduser('~/.mozilla/firefox'),
+             os.path.expanduser('~/Library/Application Support/Firefox/Profiles')]
+    for r in roots:
+        if r and os.path.isdir(r):
+            for d in os.listdir(r):
+                if os.path.isfile(os.path.join(r, d, 'cookies.sqlite')):
+                    return True
+    return False
+
+
 FFMPEG = find_ffmpeg()
 JSRT = find_js()
+FIREFOX = has_firefox()
+
+# Μηνύματα που σημαίνουν "το YouTube ζητάει σύνδεση"
+BOT_SIGNS = ('sign in to confirm', 'not a bot', 'confirm your age',
+             'use --cookies', 'login required', 'age-restricted')
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -150,7 +169,7 @@ def hook(d):
         Q.put(('status', "Ένωση βίντεο + ήχου... (λίγη υπομονή)", 'dim'))
 
 
-def build_opts(save_path, mode, quality, browser):
+def build_opts(save_path, mode, quality, use_cookies):
     opts = {
         'outtmpl': os.path.join(save_path, '%(title).180B.%(ext)s'),
         'progress_hooks': [hook],
@@ -165,11 +184,8 @@ def build_opts(save_path, mode, quality, browser):
 
     if FFMPEG:
         opts['ffmpeg_location'] = FFMPEG
-
-    if browser and browser.startswith("Firefox"):
+    if use_cookies:
         opts['cookiesfrombrowser'] = ('firefox',)
-    elif browser and browser != "— κανένας —":
-        opts['cookiesfrombrowser'] = (browser.split()[0].lower(),)
 
     if mode == 'audio':
         if FFMPEG:
@@ -197,14 +213,14 @@ def build_opts(save_path, mode, quality, browser):
 def friendly_error(msg):
     m = msg.lower()
     if 'could not copy' in m and 'cookie' in m:
-        return ("Το Chrome κλειδώνει τα cookies του και δεν μπορώ να τα "
-                "διαβάσω. Διάλεξε Firefox, ή άσε «κανένας».")
+        return ("Δεν μπόρεσα να διαβάσω τα cookies — κλείσε τελείως τον "
+                "Firefox και ξαναδοκίμασε.")
     if 'dpapi' in m or 'failed to decrypt' in m:
-        return ("Το Chrome κρυπτογραφεί πλέον τα cookies του και κανένα "
-                "εξωτερικό πρόγραμμα δεν τα διαβάζει. Χρησιμοποίησε Firefox.")
-    if 'sign in to confirm' in m or 'not a bot' in m:
-        return ("Το YouTube μπλόκαρε το αίτημα. Διάλεξε Firefox στο πεδίο "
-                "«Cookies» (συνδεδεμένος στο YouTube) και ξαναδοκίμασε.")
+        return ("Ο browser κρυπτογραφεί τα cookies του. Μόνο ο Firefox "
+                "δουλεύει γι' αυτή τη δουλειά.")
+    if any(s in m for s in BOT_SIGNS):
+        return ("Το YouTube ζητάει σύνδεση. Εγκατέστησε Firefox, μπες στο "
+                "YouTube μ' αυτόν, και τσέκαρε «Σύνδεση μέσω Firefox».")
     if 'unable to extract' in m or 'player response' in m:
         return ("Το yt-dlp είναι παλιό για τις τωρινές αλλαγές του YouTube. "
                 "Πάτα «Ενημέρωση» πάνω δεξιά.")
@@ -221,12 +237,30 @@ def friendly_error(msg):
     return msg.replace('ERROR: ', '').strip()[:160]
 
 
-def worker(url, save_path, mode, quality, browser):
+def _attempt(url, save_path, mode, quality, use_cookies):
+    with yt_dlp.YoutubeDL(build_opts(save_path, mode, quality, use_cookies)) as ydl:
+        ydl.download([url])
+
+
+def worker(url, save_path, mode, quality, allow_cookies):
     try:
         os.makedirs(save_path, exist_ok=True)
         Q.put(('status', "Σύνδεση με YouTube...", 'dim'))
-        with yt_dlp.YoutubeDL(build_opts(save_path, mode, quality, browser)) as ydl:
-            ydl.download([url])
+
+        # Πρώτα χωρίς cookies — είναι πιο γρήγορο και δουλεύει συνήθως.
+        # Μόνο αν το YouTube ζητήσει σύνδεση, ξαναδοκιμάζουμε με Firefox.
+        try:
+            _attempt(url, save_path, mode, quality, False)
+        except Exception as first:
+            if (allow_cookies and FIREFOX
+                    and any(s in str(first).lower() for s in BOT_SIGNS)):
+                Q.put(('status', "Το YouTube ζήτησε σύνδεση — "
+                                 "ξαναδοκιμάζω με τα cookies του Firefox...", 'warn'))
+                Q.put(('progress', 0))
+                _attempt(url, save_path, mode, quality, True)
+            else:
+                raise
+
         Q.put(('progress', 100))
         kind = ("MP3" if FFMPEG else "αρχείο ήχου") if mode == 'audio' else "βίντεο"
         Q.put(('status', f"Έτοιμο! Το {kind} αποθηκεύτηκε. ✅", 'ok'))
@@ -319,7 +353,7 @@ def lbl(parent, text, fg=C['dim'], font=F_LBL):
 head = tk.Frame(win, bg=C['bg'])
 head.pack(fill='x', padx=26, pady=(20, 0))
 tk.Label(head, text="Katevase To", bg=C['bg'], fg=C['txt'], font=F_TITLE).pack(side='left')
-tk.Label(head, text=" v1.3", bg=C['bg'], fg=C['accent'], font=F_SUB).pack(side='left', pady=(7, 0))
+tk.Label(head, text=" v1.4", bg=C['bg'], fg=C['accent'], font=F_SUB).pack(side='left', pady=(7, 0))
 flat_btn(head, "⟳ Ενημέρωση", lambda: start(updater),
          C['panel'], C['dim'], padx=10, pady=4).pack(side='right')
 
@@ -386,25 +420,32 @@ def mk_toggle(parent, text, value):
 mk_toggle(opts, "Βίντεο  MP4", 'video').pack(side='left')
 mk_toggle(opts, "Ήχος  MP3", 'audio').pack(side='left', padx=(6, 20))
 
-qual_lbl = lbl(opts, "Ποιότητα")
-qual_lbl.pack(side='left', padx=(0, 6))
+# ΔΙΟΡΘΩΣΗ: label + dropdown μαζί σε ΕΝΑ frame. Παλιά τα έκρυβα χωριστά
+# και μετά τα ξανάβαζα με before=dropdown — αλλά το dropdown ήταν κι αυτό
+# κρυμμένο, οπότε το Tk πετούσε σφάλμα και το μενού χανόταν για πάντα.
+qual_frame = tk.Frame(opts, bg=C['bg'])
+lbl(qual_frame, "Ποιότητα").pack(side='left', padx=(0, 6))
 qual_var = tk.StringVar(value="Μέγιστη")
 ALL_Q = ["Μέγιστη", "2160p", "1440p", "1080p", "720p", "480p"]
-qual_box = ttk.Combobox(opts, textvariable=qual_var, state='readonly',
+qual_box = ttk.Combobox(qual_frame, textvariable=qual_var, state='readonly',
                         width=10, values=ALL_Q)
 qual_box.pack(side='left')
 
+# ── Cookies: ένα απλό τικ, και το πρόγραμμα αποφασίζει πότε το χρειάζεται
 ck = tk.Frame(body, bg=C['bg'])
-ck.grid(row=5, column=0, columnspan=3, sticky='ew', pady=(12, 0))
-lbl(ck, "Cookies από").pack(side='left', padx=(0, 8))
-ck_var = tk.StringVar(value="— κανένας —")
-ttk.Combobox(ck, textvariable=ck_var, state='readonly', width=22,
-             values=["— κανένας —", "Firefox  (δουλεύει)",
-                     "Chrome  (δεν δουλεύει πια)",
-                     "Edge  (δεν δουλεύει πια)",
-                     "Brave  (δεν δουλεύει πια)"]).pack(side='left')
-lbl(ck, "← μόνο αν σου βγάζει μπλόκο", fg=C['line'],
-    font=F_SUB).pack(side='left', padx=(8, 0))
+ck.grid(row=5, column=0, columnspan=3, sticky='ew', pady=(14, 0))
+
+cookie_var = tk.BooleanVar(value=FIREFOX)
+cookie_chk = tk.Checkbutton(
+    ck, text="  Σύνδεση μέσω Firefox, αν το ζητήσει το YouTube",
+    variable=cookie_var, font=F_LBL, bg=C['bg'], fg=C['txt'],
+    selectcolor=C['field'], activebackground=C['bg'],
+    activeforeground=C['txt'], bd=0, highlightthickness=0,
+    cursor='hand2', anchor='w')
+cookie_chk.pack(side='left')
+
+cookie_hint = lbl(ck, "", fg=C['line'], font=F_SUB)
+cookie_hint.pack(side='left', padx=(8, 0))
 
 # ── Footer ────────────────────────────────────────────────────────────
 foot = tk.Frame(win, bg=C['bg'])
@@ -425,9 +466,6 @@ status.pack(fill='x', side='bottom', pady=(9, 0))
 prog_var = tk.DoubleVar(value=0)
 prog = ttk.Progressbar(foot, variable=prog_var, maximum=100,
                        style="P.Horizontal.TProgressbar")
-# ΔΙΟΡΘΩΣΗ: παλιά έκανα pack_forget() και μετά pack() σκέτο — το Tk το
-# ξανάβαζε στο ΤΕΛΟΣ του frame, κάτω από το status, εκτός παραθύρου.
-# Τώρα μπαίνει πάντα ρητά πριν το status.
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -435,19 +473,16 @@ prog = ttk.Progressbar(foot, variable=prog_var, maximum=100,
 # ══════════════════════════════════════════════════════════════════════
 
 def show_prog(on):
-    if on:
-        prog.pack(fill='x', pady=(10, 0), before=status)
-    else:
-        prog.pack_forget()
+    # Πάντα ρητά πριν το status, αλλιώς το Tk το ξαναβάζει στο τέλος
+    # του frame και φεύγει εκτός παραθύρου.
+    prog.pack(fill='x', pady=(10, 0), before=status) if on else prog.pack_forget()
 
 
 def refresh_mode():
     if mode_var.get() == 'video':
-        qual_lbl.pack(side='left', padx=(0, 6), before=qual_box)
-        qual_box.pack(side='left')
+        qual_frame.pack(side='left')
     else:
-        qual_lbl.pack_forget()
-        qual_box.pack_forget()
+        qual_frame.pack_forget()
 
 
 def refresh_notices():
@@ -460,6 +495,15 @@ def refresh_notices():
     else:
         qual_box.config(values=["720p"], state='disabled')
         qual_var.set("720p")
+
+
+def refresh_cookies():
+    if FIREFOX:
+        cookie_hint.config(text="(κλείσε τον Firefox πριν το κατέβασμα)")
+    else:
+        cookie_var.set(False)
+        cookie_chk.config(state='disabled', fg=C['line'])
+        cookie_hint.config(text="(δεν βρέθηκε Firefox σ' αυτό το PC)")
 
 
 def paste():
@@ -491,7 +535,7 @@ def go():
         status.config(text="Βάλε πρώτα ένα link!", fg=C['err'])
         return
     path = path_entry.get().strip() or os.path.join(os.path.expanduser("~"), "Downloads")
-    start(worker, url, path, mode_var.get(), qual_var.get(), ck_var.get())
+    start(worker, url, path, mode_var.get(), qual_var.get(), cookie_var.get())
 
 
 def pump():
@@ -517,6 +561,7 @@ def pump():
 # ── Εκκίνηση ──────────────────────────────────────────────────────────
 refresh_mode()
 refresh_notices()
+refresh_cookies()
 url_entry.focus()
 win.bind('<Return>', lambda e: go() if str(go_btn['state']) == 'normal' else None)
 win.after(120, pump)
