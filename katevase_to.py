@@ -596,6 +596,17 @@ win.configure(bg=C['bg'])
 win.geometry("620x500")
 win.resizable(False, False)
 
+# Εικονίδιο παραθύρου / taskbar: το icon.ico δίπλα στο .py, ή μέσα στο
+# .exe (το PyInstaller το βάζει στο sys._MEIPASS με --add-data).
+for _base in (getattr(sys, '_MEIPASS', None), HERE):
+    _ico = os.path.join(_base, 'icon.ico') if _base else None
+    if _ico and os.path.isfile(_ico):
+        try:
+            win.iconbitmap(default=_ico)
+        except tk.TclError:
+            pass
+        break
+
 st = ttk.Style()
 st.theme_use('clam')
 st.configure("TEntry", fieldbackground=C['field'], foreground=C['txt'],

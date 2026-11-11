@@ -12,11 +12,12 @@ A desktop YouTube downloader (MP4 video / MP3 audio) built for **non-technical u
 - **Self-healing setup:** missing dependencies are detected at startup and installed with one click
   - `yt-dlp` is installed into the *same* Python interpreter that runs the app (`sys.executable`), which avoids the classic "installed it, but into another Python" problem
   - `ffmpeg` is fetched through `imageio-ffmpeg`, with no manual PATH editing
-  - a missing Node.js/Deno runtime (needed by yt-dlp for 1080p+) is flagged with a download link
+  - a missing Node.js/Deno runtime is flagged with a download link. YouTube now serves many videos only after a JavaScript challenge is solved, so a runtime is effectively required
 - **Graceful degradation:** without ffmpeg it still works (progressive MP4 up to 720p, M4A audio)
 - **Automatic sign-in fallback:** it tries first without cookies. Only if YouTube asks for sign-in ("confirm you're not a bot") does it retry with the local Firefox session cookies
 - **Human-readable errors:** yt-dlp exceptions are mapped to plain-language messages that tell the user what to do next
 - **One-click yt-dlp update** for when YouTube changes break downloads. It works in the `.exe` too (see below)
+- **YouTube challenge solving:** every detected JS runtime (Deno, Node.js, Bun) is passed to yt-dlp explicitly, because yt-dlp enables only Deno by default and would silently ignore an installed Node.js. The EJS solver script ships with `yt-dlp[default]`; if it's missing (e.g. after an in-app update of the `.exe`), yt-dlp fetches it from GitHub
 - **Bilingual UI (Ελληνικά / English):** switch with one click; the choice is remembered
 
 ## Design notes
@@ -54,6 +55,7 @@ A standalone Windows `.exe` (no Python needed) is available under [Releases](htt
 
 | Version | Changes |
 |---|---|
+| **v1.6** | Fixed "This video is not available" on many videos: Node.js is now passed to yt-dlp explicitly and the EJS challenge solver is bundled (or fetched when missing); this also fixes the Firefox-cookie retry; `yt-dlp[default]` install; clearer unavailable-video message; custom app icon support |
 | **v1.5** | English/Greek language switch (remembered); update & ffmpeg install now work in the standalone `.exe`; yt-dlp version shown in header |
 | **v1.4** | Automatic Firefox-cookie retry; cookie checkbox replaces browser list; fixed quality menu vanishing after MP3 ↔ MP4 toggle |
 | **v1.3** | Node.js/Deno detection for 1080p+; notice panel for missing tools; progress-bar layout fix; `.bat` launcher |
@@ -63,10 +65,12 @@ A standalone Windows `.exe` (no Python needed) is available under [Releases](htt
 
 ```bash
 pip install -U pyinstaller "yt-dlp[default]"
-python -m PyInstaller --noconfirm --onefile --windowed --name Katevase_To --collect-all yt_dlp --collect-all yt_dlp_ejs katevase_to.py
+python -m PyInstaller --noconfirm --onefile --windowed --name Katevase_To --icon icon.ico --add-data "icon.ico;." --collect-all yt_dlp --collect-all yt_dlp_ejs katevase_to.py
 ```
 
-The executable is created in `dist/`.
+The executable is created in `dist/`. `icon.ico` (next to `katevase_to.py`) is used both as the `.exe` file icon and, bundled via `--add-data`, as the window/taskbar icon. Without an icon, drop the `--icon` and `--add-data` options.
+
+Step-by-step instructions in Greek: [ΟΔΗΓΙΕΣ_EXE.txt](ΟΔΗΓΙΕΣ_EXE.txt).
 
 ## Built with
 

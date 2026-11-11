@@ -43,13 +43,20 @@
  ΒΗΜΑ 3 — Χτίσε το .exe  (μία γραμμή, αντέγραψέ τη ΟΛΗ)
 ---------------------------------------------------------------------
 
-    python -m PyInstaller --noconfirm --onefile --windowed --name Katevase_To --collect-all yt_dlp --collect-all yt_dlp_ejs katevase_to.py
+    python -m PyInstaller --noconfirm --onefile --windowed --name Katevase_To --icon icon.ico --add-data "icon.ico;." --collect-all yt_dlp --collect-all yt_dlp_ejs katevase_to.py
+
+(Θέλει το icon.ico μέσα στον φάκελο — δες «ΕΙΚΟΝΙΔΙΟ» πιο κάτω.
+ Αν δεν έχεις εικονίδιο, σβήσε από την εντολή τα κομμάτια
+ --icon icon.ico   και   --add-data "icon.ico;.")
 
 Τι σημαίνει το καθένα:
   --noconfirm               → σβήνει το παλιό χωρίς να ρωτάει
   --onefile                 → ΕΝΑ μόνο αρχείο .exe
   --windowed                → χωρίς μαύρο παράθυρο κονσόλας
   --name Katevase_To        → το όνομα του .exe
+  --icon icon.ico           → το εικονίδιο του ΑΡΧΕΙΟΥ .exe (στον Explorer)
+  --add-data "icon.ico;."   → βάζει το icon.ico ΜΕΣΑ στο .exe, για να το
+                              δείχνει και το παράθυρο / η γραμμή εργασιών
   --collect-all yt_dlp      → βάζει ΟΛΟ το yt-dlp μέσα
   --collect-all yt_dlp_ejs  → βάζει μέσα και το «λύτη γρίφων» (ΣΗΜΑΝΤΙΚΟ)
 
@@ -97,12 +104,50 @@
   [ ] Άλλαξα το VERSION = "..." στην αρχή του katevase_to.py
   [ ] Έγραψα τι νέο υπάρχει στο README.md (πίνακας Version history)
   [ ] pip install -U "yt-dlp[default]"
+  [ ] Υπάρχει το icon.ico στον φάκελο
   [ ] Έχτισα, δοκίμασα, έκανα commit + push, ανέβασα Release
+
+
+---------------------------------------------------------------------
+ ΕΙΚΟΝΙΔΙΟ — πώς βάζω το δικό μου
+---------------------------------------------------------------------
+
+Το εικονίδιο ΠΡΕΠΕΙ να λέγεται  icon.ico  και να είναι μέσα στον
+φάκελο katevase-to (δίπλα στο katevase_to.py).
+
+Το ίδιο αρχείο χρησιμοποιείται για δύο πράγματα:
+  - το εικονίδιο του .exe στον Explorer / στην επιφάνεια εργασίας
+  - το εικονίδιο πάνω αριστερά στο παράθυρο και στη γραμμή εργασιών
+    (αυτό το δείχνει και όταν τρέχεις το .py από το .bat)
+
+Αν έχεις εικόνα PNG/JPG (όχι .ico), μετάτρεψέ τη:
+
+  Τρόπος Α (με Python — μία φορά: pip install pillow):
+
+    python -c "from PIL import Image; Image.open('logo.png').save('icon.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+    (βάλε στη θέση του logo.png το όνομα της δικής σου εικόνας)
+
+  Τρόπος Β (χωρίς τίποτα): ανέβασέ τη σε ένα site «png to ico»
+    (π.χ. icoconvert.com ή convertico.com) και κατέβασε το .ico.
+    Μετονόμασέ το σε icon.ico.
+
+Συμβουλές:
+  - Τετράγωνη εικόνα, τουλάχιστον 256x256, ιδανικά με διάφανο φόντο.
+  - Απλό σχέδιο — στα 16x16 pixel οι λεπτομέρειες χάνονται.
+
+Αν αλλάξεις εικονίδιο και ο Explorer δείχνει ακόμα το παλιό:
+  Είναι η «μνήμη» (cache) των Windows. Μετονόμασε το .exe ή κάνε
+  επανεκκίνηση και θα εμφανιστεί το καινούριο.
 
 
 ---------------------------------------------------------------------
  ΑΝ ΚΑΤΙ ΠΑΕΙ ΣΤΡΑΒΑ
 ---------------------------------------------------------------------
+ • «Unable to find ...icon.ico» στο χτίσιμο
+     → Δεν υπάρχει icon.ico στον φάκελο. Βάλ' το, ή σβήσε τα
+       --icon icon.ico  και  --add-data "icon.ico;."  από την εντολή.
+
 
  • «pyinstaller is not recognized» / «No module named PyInstaller»
      → pip install -U pyinstaller
