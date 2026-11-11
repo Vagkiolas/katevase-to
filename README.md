@@ -62,8 +62,8 @@ A standalone Windows `.exe` (no Python needed) is available under [Releases](htt
 ## Building the .exe
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --name Katevase_To --collect-all yt_dlp katevase_to.py
+pip install -U pyinstaller "yt-dlp[default]"
+python -m PyInstaller --noconfirm --onefile --windowed --name Katevase_To --collect-all yt_dlp --collect-all yt_dlp_ejs katevase_to.py
 ```
 
 The executable is created in `dist/`.
