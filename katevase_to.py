@@ -1,5 +1,5 @@
 """
-Katevase To v1.5
+Katevase To v1.6
 Απλός YouTube downloader (βίντεο MP4 / ήχος MP3)
 Simple YouTube downloader (MP4 video / MP3 audio)
 
@@ -11,6 +11,11 @@ Simple YouTube downloader (MP4 video / MP3 audio)
     yt-dlp    → το βάζει μόνο του
     ffmpeg    → το βάζει μόνο του με κουμπί
     Node.js   → χρειάζεται για αναλύσεις πάνω από 720p
+
+ΝΕΑ ΣΤΗΝ 1.6:
+    - Διόρθωση «This video is not available»: το yt-dlp πλέον χρειάζεται
+      JavaScript runtime + το script EJS. Δίνουμε ρητά το Node.js (μόνο
+      του το yt-dlp ενεργοποιεί μόνο το Deno) και επιτρέπουμε το EJS.
 
 ΝΕΑ ΣΤΗΝ 1.5:
     - Επιλογή γλώσσας Ελληνικά / English (θυμάται την επιλογή)
@@ -33,7 +38,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 import tkinter.messagebox as mb
 
-VERSION = "1.5"
+VERSION = "1.6"
 
 # Τρέχουμε μέσα σε .exe του PyInstaller; Τότε το sys.executable είναι το
 # ίδιο το .exe και ΔΕΝ υπάρχει pip — οι εγκαταστάσεις γίνονται αλλιώς.
@@ -84,7 +89,7 @@ STRINGS = {
         'btn_update':     "⟳ Ενημέρωση",
         'ff_notice':      "⚠  Λείπει το ffmpeg → μόνο 720p, χωρίς MP3",
         'ff_btn':         "Εγκατάσταση",
-        'js_notice':      "⚠  Λείπει το Node.js → το YouTube κρύβει τα 1080p+",
+        'js_notice':      "⚠  Λείπει το Node.js → πολλά βίντεο δεν θα κατεβαίνουν",
         'js_btn':         "Κατέβασέ το",
         'lbl_link':       "Link",
         'btn_paste':      "Επικόλληση",
@@ -123,7 +128,7 @@ STRINGS = {
         'err_bot':        "Το YouTube ζητάει σύνδεση. Εγκατέστησε Firefox, μπες στο YouTube μ' αυτόν, και τσέκαρε «Σύνδεση μέσω Firefox».",
         'err_outdated':   "Το yt-dlp είναι παλιό για τις τωρινές αλλαγές του YouTube. Πάτα «Ενημέρωση» πάνω δεξιά.",
         'err_private':    "Το βίντεο είναι ιδιωτικό.",
-        'err_unavail':    "Το βίντεο δεν είναι διαθέσιμο (ή μπλοκαρισμένο στην Ελλάδα).",
+        'err_unavail':    "Το YouTube δεν δίνει το βίντεο. Πάτα «Ενημέρωση» πάνω δεξιά και ξαναδοκίμασε (μπορεί και να είναι μπλοκαρισμένο στην Ελλάδα).",
         'err_url':        "Το link δεν φαίνεται σωστό.",
         'err_ffmpeg':     "Λείπει το ffmpeg. Πάτα το κουμπί «Εγκατάσταση».",
         'err_format':     "Αυτή η ανάλυση δεν υπάρχει γι' αυτό το βίντεο. Δοκίμασε άλλη.",
@@ -141,7 +146,7 @@ STRINGS = {
         'btn_update':     "⟳ Update",
         'ff_notice':      "⚠  ffmpeg missing → 720p max, no MP3",
         'ff_btn':         "Install",
-        'js_notice':      "⚠  Node.js missing → YouTube hides 1080p+",
+        'js_notice':      "⚠  Node.js missing → many videos won't download",
         'js_btn':         "Get it",
         'lbl_link':       "Link",
         'btn_paste':      "Paste",
@@ -180,7 +185,7 @@ STRINGS = {
         'err_bot':        "YouTube wants you to sign in. Install Firefox, sign in to YouTube with it, and tick «Sign in via Firefox».",
         'err_outdated':   "yt-dlp is too old for YouTube's latest changes. Press «Update» at the top right.",
         'err_private':    "This video is private.",
-        'err_unavail':    "This video is unavailable (or blocked in your country).",
+        'err_unavail':    "YouTube won't serve this video. Press «Update» at the top right and try again (it may also be blocked in your country).",
         'err_url':        "That link doesn't look right.",
         'err_ffmpeg':     "ffmpeg is missing. Press the «Install» button.",
         'err_format':     "This resolution isn't available for this video. Try another one.",
@@ -253,7 +258,7 @@ def _load_ytdlp():
         root.destroy()
         sys.exit(1)
 
-    r = _pip_install("yt-dlp")
+    r = _pip_install("yt-dlp[default]")
     root.destroy()
 
     root2 = tk.Tk(); root2.withdraw()
@@ -320,9 +325,16 @@ def find_ffmpeg():
 
 
 def find_js():
-    """Το yt-dlp χρειάζεται JavaScript runtime για να ξεκλειδώσει τις
-       μεγάλες αναλύσεις. Node.js ή Deno — ό,τι βρεθεί."""
-    return shutil.which("node") or shutil.which("deno")
+    """Το yt-dlp χρειάζεται JavaScript runtime για να λύσει τους «γρίφους»
+       του YouTube. Επιστρέφει {όνομα: {'path': ...}} για ό,τι βρεθεί.
+       ΠΡΟΣΟΧΗ: το yt-dlp ενεργοποιεί μόνο του ΜΟΝΟ το Deno — το Node
+       πρέπει να του το δώσουμε ρητά, αλλιώς το αγνοεί."""
+    found = {}
+    for name in ("deno", "node", "bun"):
+        p = shutil.which(name)
+        if p:
+            found[name] = {'path': p}
+    return found
 
 
 def has_firefox():
@@ -447,6 +459,12 @@ def build_opts(save_path, mode, height, use_cookies):
 
     if FFMPEG:
         opts['ffmpeg_location'] = FFMPEG
+    if JSRT:
+        opts['js_runtimes'] = JSRT
+    # Το script που λύνει τους γρίφους του YouTube (EJS). Αν δεν είναι
+    # εγκατεστημένο (π.χ. μέσα στο .exe), το yt-dlp το κατεβάζει από το
+    # GitHub. Χωρίς αυτό πολλά βίντεο βγάζουν «This video is not available».
+    opts['remote_components'] = ['ejs:github']
     if use_cookies:
         opts['cookiesfrombrowser'] = ('firefox',)
 
@@ -484,7 +502,7 @@ def friendly_error(msg):
         return T('err_outdated')
     if 'private video' in m:
         return T('err_private')
-    if 'video unavailable' in m:
+    if 'video unavailable' in m or 'video is not available' in m:
         return T('err_unavail')
     if 'is not a valid url' in m or 'unsupported url' in m:
         return T('err_url')
@@ -535,7 +553,7 @@ def updater():
             update_ytdlp_frozen()
             ok = True
         else:
-            ok = _pip_install("yt-dlp").returncode == 0
+            ok = _pip_install("yt-dlp[default]").returncode == 0
         Q.put(('status', T('st_updated') if ok else T('st_update_fail'),
                'ok' if ok else 'err'))
     except Exception:
